@@ -75,15 +75,18 @@ $$
 \mathbf{x}
 =
 \begin{bmatrix}
-x & y & v & \psi
-\end{bmatrix}^{T},
+x \\
+y \\
+v \\
+\psi
+\end{bmatrix}
 $$
 
-where
+where:
 
-* \(x,y\) are position,
-* \(v\) is speed,
-* \(\psi\) is heading.
+* $x$ and $y$ are position,
+* $v$ is speed,
+* $\psi$ is heading.
 
 The control input is
 
@@ -91,14 +94,15 @@ $$
 \mathbf{u}
 =
 \begin{bmatrix}
-a & \omega
-\end{bmatrix}^{T},
+a \\
+\omega
+\end{bmatrix}
 $$
 
-where
+where:
 
-* \(a\) is longitudinal acceleration,
-* \(\omega\) is heading rate.
+* $a$ is longitudinal acceleration,
+* $\omega$ is heading rate.
 
 The default simulation uses:
 
@@ -122,7 +126,7 @@ Vehicles start approximately uniformly distributed around a circle and are assig
 
 ## Controller
 
-### Nominal goal-tracking policy
+### Nominal Goal-Tracking Policy
 
 A simple goal-tracking controller generates nominal acceleration and heading-rate commands.
 
@@ -130,9 +134,7 @@ This controller attempts to move each vehicle toward its destination but does no
 
 The nominal policy therefore serves as the reference command for the MPC coordination layer.
 
----
-
-### Centralized nonlinear MPC
+### Centralized Nonlinear MPC
 
 The coordination controller jointly optimizes the commands of all active vehicles.
 
@@ -144,7 +146,19 @@ The optimization balances:
 2. control smoothness,
 3. separation-constraint slack.
 
-The separation constraint is implemented as a **soft constraint**, allowing the optimization problem to remain feasible when the desired separation cannot be maintained.
+The separation condition can be written conceptually as
+
+$$
+d_{ij}(k) \geq d_{\mathrm{sep}} - s_{ij}(k),
+$$
+
+where:
+
+* $d_{ij}$ is the predicted distance between vehicles $i$ and $j$,
+* $d_{\mathrm{sep}}$ is the desired separation distance,
+* $s_{ij} \geq 0$ is a slack variable.
+
+The separation constraint is therefore implemented as a **soft constraint**, allowing the optimization problem to remain feasible when the desired separation cannot be maintained.
 
 The optimization is solved using **SciPy SLSQP**.
 
@@ -161,28 +175,26 @@ State reports can arrive with a configurable delay.
 For the stale-information case,
 
 $$
-\hat{\mathbf{x}}_k
-=
-\mathbf{x}_{k-d},
+\hat{\mathbf{x}}_k = \mathbf{x}_{k-d},
 $$
 
-where \(d\) is the reporting delay expressed in simulation steps.
+where $d$ is the reporting delay expressed in simulation steps.
 
 The controller therefore makes its decision using information describing the system at an earlier point in time.
 
-For sufficiently large delays, the difference between
+For sufficiently large delays, the difference between the delayed state
 
 $$
 \mathbf{x}_{k-d}
 $$
 
-and the actual state
+and the actual current state
 
 $$
-\mathbf{x}_{k}
+\mathbf{x}_k
 $$
 
-can become large enough to produce incorrect trajectory predictions and poor coordination decisions.
+can become large enough to produce inaccurate trajectory predictions and poor coordination decisions.
 
 ---
 
@@ -190,25 +202,42 @@ can become large enough to produce incorrect trajectory predictions and poor coo
 
 The compensated controller begins with the same delayed state report but also uses the sequence of control commands issued after that report was generated.
 
-Conceptually,
+Starting from
 
 $$
-\mathbf{x}_{k-d}
-\overset{
-u_{k-d},\ldots,u_{k-1}
-}{\longrightarrow}
-\hat{\mathbf{x}}_{k}.
+\hat{\mathbf{x}}_{k-d} = \mathbf{x}_{k-d},
 $$
 
-The controller repeatedly applies its internal vehicle model using the stored command history:
+the stored commands are replayed through the controller's internal vehicle model:
 
 $$
 \hat{\mathbf{x}}_{t+1}
 =
-f(\hat{\mathbf{x}}_{t},\mathbf{u}_{t}).
+f\left(
+\hat{\mathbf{x}}_t,
+\mathbf{u}_t
+\right),
+\qquad
+t = k-d,\ldots,k-1.
 $$
 
-The resulting estimate is then passed to the MPC instead of the original stale measurement.
+This produces an estimate of the current state,
+
+$$
+\hat{\mathbf{x}}_k,
+$$
+
+which is then supplied to the MPC instead of the original stale measurement.
+
+Conceptually,
+
+$$
+\mathbf{x}_{k-d}
+\xrightarrow{
+\mathbf{u}_{k-d},\ldots,\mathbf{u}_{k-1}
+}
+\hat{\mathbf{x}}_k.
+$$
 
 This method is intentionally simple. It does not estimate unknown disturbances and does not use hidden simulator state.
 
@@ -230,7 +259,7 @@ a_{\mathrm{command}}
 w,
 $$
 
-with
+where
 
 $$
 w \sim \mathcal{N}(0,\sigma_a^2).
@@ -238,7 +267,7 @@ $$
 
 The disturbance is applied only to the simulated plant.
 
-The controller does not observe \(w\), and the compensation model therefore cannot reproduce the true trajectory exactly.
+The controller does not observe $w$, and the compensation model therefore cannot reproduce the true trajectory exactly.
 
 A separate seeded random stream is used for the disturbance so that controller configurations can be compared under consistent disturbance realizations.
 
@@ -253,18 +282,18 @@ For two vehicles moving linearly between consecutive simulation samples, the min
 An episode is marked as containing a separation violation if
 
 $$
-d_{ij}<20\text{ m}
+d_{ij} < 20\ \mathrm{m}
 $$
 
 for any active vehicle pair at any point during the episode.
 
-The MPC itself targets a slightly larger distance of
+The MPC itself targets a slightly larger distance:
 
 $$
-d_{\mathrm{target}}=23\text{ m},
+d_{\mathrm{target}} = 23\ \mathrm{m}.
 $$
 
-providing a 3 m planning margin before constraint slack is introduced.
+This provides a **3 m planning margin** before separation slack is introduced.
 
 ---
 
@@ -284,7 +313,7 @@ under three nominal report delays:
 
 Each condition is evaluated using seeds **7–16**.
 
-This gives
+The experiment grid therefore contains
 
 $$
 3 \times 3 \times 10 = 90
@@ -572,109 +601,21 @@ aircoord/
 ```
 
 ---
-
-## Design Choices
-
-Several choices were made deliberately to keep the project small enough to inspect while still exposing meaningful coordination failures.
-
-### Centralized coordination
-
-The controller optimizes all active vehicles jointly.
-
-This avoids introducing communication topology or distributed-consensus effects into the initial study and allows the experiment to focus specifically on delayed state information.
-
-### Shared scenario seeds
-
-Initial conditions and plant disturbances are generated reproducibly.
-
-Using the same seeds across control configurations reduces variation caused by different scenarios and makes paired comparisons possible.
-
-### Plant-only disturbances
-
-The acceleration disturbance is applied after the commanded acceleration is generated and is unknown to the controller.
-
-The compensated controller therefore receives no privileged access to the simulated plant state.
-
-### Soft separation constraint
-
-Separation slack prevents the nonlinear optimization problem from becoming immediately infeasible.
-
-The magnitude and frequency of slack usage are recorded so that numerical feasibility is not confused with guaranteed safety.
-
----
-
-## Limitations
-
-AIRCOORD is a research prototype and several simplifications remain.
-
-### No formal safety guarantee
-
-The separation condition inside the MPC is soft. Neither the MPC nor the fallback controller provides a formal collision-avoidance guarantee.
-
-### Simplified dynamics
-
-The vehicles use a planar kinematic model. Full aircraft translational and rotational dynamics, aerodynamic effects, wind fields, and actuator dynamics are not modeled.
-
-### Limited scenario geometry
-
-The main experiment considers a four-way crossing scenario. Performance in denser, asymmetric, or structured traffic environments has not yet been established.
-
-### Simplified communication model
-
-Communication degradation is represented primarily through fixed state-report delay.
-
-Packet loss, asynchronous reports, variable latency, communication topology, and bandwidth constraints are outside the current scope.
-
-### Model-based compensation
-
-Command replay assumes known nominal vehicle dynamics and reliable execution of previous control commands.
-
-Unobserved disturbances cause the propagated estimate to diverge from the true state as the delay increases.
-
-### Computational cost
-
-The controller uses centralized nonlinear optimization. Its computational cost can grow rapidly with the number of vehicles and therefore limits scalability.
-
-### Solver latency
-
-The simulator waits for each optimization to finish before advancing simulated time. Optimization wall-clock latency is recorded but is not currently inserted back into the communication or control loop.
-
 ---
 
 ## Future Work
 
-AIRCOORD provides a baseline for several extensions.
-
-Possible next steps include:
+AIRCOORD provides a baseline for several extensions:
 
 * decentralized or distributed coordination,
 * time-varying and stochastic communication delays,
 * packet loss and asynchronous state updates,
 * probabilistic state estimation,
 * uncertainty-aware MPC,
-* explicit robust or chance-constrained safety formulations,
+* robust or chance-constrained safety formulations,
 * larger and more heterogeneous traffic scenarios,
 * learning-based multi-agent coordination,
 * comparison between model-based prediction and learned state prediction,
 * real-time optimization and hardware-in-the-loop evaluation.
 
 A particularly interesting direction is to study how **model-based prediction and learning-based decision making can be combined when agents operate with incomplete, delayed, or uncertain information**.
-
----
-
-## Technical Report
-
-A more detailed discussion of the model, controller design, experiment setup, and results is available in:
-
-[`AIRCOORD_Report.pdf`](AIRCOORD_Report.pdf)
-
----
-
-## Author
-
-**Fatih Emin Uluışık**
-
-B.Sc. Mechanical Engineering
-Bilkent University
-
-Research interests: dynamic systems, control, optimization, autonomous systems, and multi-agent decision making.
