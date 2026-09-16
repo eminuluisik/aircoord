@@ -1,124 +1,680 @@
 # AIRCOORD
-### Delayed-state compensation for multi-vehicle coordination with centralized MPC
 
-AIRCOORD is a small 2D simulation study of how delayed state reports affect cooperative trajectory control. A centralized model predictive controller (MPC) compares fresh reports, stale reports, and estimates reconstructed by replaying previously sent commands.
+### Delayed-State Compensation for Multi-Vehicle Coordination with Centralized MPC
 
-The main experiment asks: **Can command replay recover coordination performance when state reports are delayed and the plant experiences unobserved acceleration disturbances?**
+AIRCOORD is a simulation study of **multi-vehicle coordination under delayed state information and model uncertainty**.
 
-## Main finding
+I developed the project to investigate a simple question:
 
-In the supplied four-vehicle crossing experiments with 2 s report delay and acceleration disturbance standard deviation 0.3 m/s², stale-state MPC recorded separation violations in **7 of 10 episodes** and a **60% vehicle arrival rate**. Command-replay compensation recorded **0 of 10 episodes with violations** and **100% arrival** on the same seeds. These are archived simulation results, not a safety guarantee.
+> **How much does delayed state information degrade cooperative trajectory control, and can part of that degradation be recovered using the history of previously issued control commands?**
 
-## What is implemented
+The system consists of multiple vehicles crossing a shared 2D airspace. A centralized nonlinear Model Predictive Controller (MPC) coordinates their trajectories while attempting to maintain pairwise separation.
 
-- A planar kinematic simulator with speed, acceleration and turn-rate limits.
-- A nominal goal-tracking baseline.
-- Joint nonlinear MPC, solved with SciPy SLSQP, with soft separation constraints.
-- Cold initialization and shifted warm initialization.
-- Timestamp-consistent current/stale reports and command-replay compensation.
-- Plant-only acceleration disturbances, with a separate seeded random stream.
-- Closest-approach checks throughout each linear simulation step.
-- Per-step solver diagnostics, episode metrics, trajectory plots and optional GIF replay.
+Three information conditions are compared:
 
-This repository contains no reinforcement-learning policy, decentralized controller, human-in-the-loop study or flight validation.
+* **Current:** the controller receives the current vehicle states.
+* **Stale:** the controller receives delayed vehicle states directly.
+* **Compensated:** delayed states are propagated forward by replaying the control commands issued since the measurement timestamp.
 
-## Representative trajectories
+To prevent the compensation method from simply reconstructing the simulator exactly, the plant is also subjected to **unobserved acceleration disturbances** that are not included in the controller model.
 
-Seed 7, 2 s report delay, acceleration noise std 0.3 m/s². These are the supplied archived plots. The left panels show complete trajectories with initial vehicle markers; right panels show closest separation over time.
+---
 
-**Stale reports:** separation violation; 3 of 4 vehicles arrive.
+## Main Result
+
+The effect of delayed information becomes particularly visible at a **2.0 s reporting delay**.
+
+With an acceleration disturbance standard deviation of **0.3 m/s²**:
+
+| State information | Episodes with separation violation | Vehicle arrival rate | Worst separation |
+| ----------------- | ---------------------------------: | -------------------: | ---------------: |
+| Current           |                             0 / 10 |                 100% |         22.896 m |
+| Stale             |                         **7 / 10** |              **60%** |      **3.980 m** |
+| Compensated       |                         **0 / 10** |             **100%** |     **22.685 m** |
+
+The required separation distance is **20 m**.
+
+These results suggest that directly using sufficiently delayed states can severely degrade coordination, while propagating those states using known command history can recover much of the lost performance in this scenario.
+
+The result is empirical and specific to the simulated conditions; it is **not a formal safety guarantee**.
+
+---
+
+## Representative Trajectories
+
+The following example uses:
+
+* 4 vehicles
+* seed 7
+* 2.0 s state-report delay
+* acceleration disturbance standard deviation of 0.3 m/s²
+
+### Stale state information
+
+The controller acts directly on delayed state reports.
+
+A separation violation occurs, and only 3 of the 4 vehicles reach their goals within the simulation horizon.
 
 ![Stale-state MPC trajectory and separation](assets/stale.png)
 
-**Compensated reports:** no observed separation violation; all 4 vehicles arrive.
+### Command-replay compensation
+
+The same delayed measurement is propagated forward using the commands issued since the measurement was generated.
+
+No separation violation is observed in this episode and all four vehicles reach their goals.
 
 ![Compensated MPC trajectory and separation](assets/compensated.png)
 
-## Quick start
+---
 
-Python 3.10 is the locally checked interpreter. Run commands from this directory.
+## Problem Setup
+
+Each vehicle is represented by the planar state
+
+$$
+\mathbf{x}
+=
+\begin{bmatrix}
+x & y & v & \psi
+\end{bmatrix}^{T},
+$$
+
+where
+
+* \(x,y\) are position,
+* \(v\) is speed,
+* \(\psi\) is heading.
+
+The control input is
+
+$$
+\mathbf{u}
+=
+\begin{bmatrix}
+a & \omega
+\end{bmatrix}^{T},
+$$
+
+where
+
+* \(a\) is longitudinal acceleration,
+* \(\omega\) is heading rate.
+
+The default simulation uses:
+
+| Parameter               |  Value |
+| ----------------------- | -----: |
+| Number of vehicles      |      4 |
+| Simulation step         |  0.1 s |
+| Maximum simulation time |   60 s |
+| Nominal cruise speed    | 10 m/s |
+| Maximum speed           | 15 m/s |
+| Maximum acceleration    | 2 m/s² |
+| Maximum turn rate       |  30°/s |
+| Required separation     |   20 m |
+| MPC separation target   |   23 m |
+| MPC prediction horizon  |    5 s |
+| MPC control blocks      |      5 |
+
+Vehicles start approximately uniformly distributed around a circle and are assigned goals on the opposite side, producing intersecting trajectories through a common conflict region.
+
+---
+
+## Controller
+
+### Nominal goal-tracking policy
+
+A simple goal-tracking controller generates nominal acceleration and heading-rate commands.
+
+This controller attempts to move each vehicle toward its destination but does not explicitly coordinate with the other vehicles.
+
+The nominal policy therefore serves as the reference command for the MPC coordination layer.
+
+---
+
+### Centralized nonlinear MPC
+
+The coordination controller jointly optimizes the commands of all active vehicles.
+
+At every control step, the MPC predicts the trajectories of the vehicles over a finite horizon and modifies the nominal commands when predicted pairwise separation becomes too small.
+
+The optimization balances:
+
+1. deviation from the nominal goal-tracking commands,
+2. control smoothness,
+3. separation-constraint slack.
+
+The separation constraint is implemented as a **soft constraint**, allowing the optimization problem to remain feasible when the desired separation cannot be maintained.
+
+The optimization is solved using **SciPy SLSQP**.
+
+Only the first control action of the optimized sequence is applied before the problem is solved again at the next simulation step.
+
+Both cold initialization and shifted warm initialization are supported.
+
+---
+
+## Delayed-State Model
+
+State reports can arrive with a configurable delay.
+
+For the stale-information case,
+
+$$
+\hat{\mathbf{x}}_k
+=
+\mathbf{x}_{k-d},
+$$
+
+where \(d\) is the reporting delay expressed in simulation steps.
+
+The controller therefore makes its decision using information describing the system at an earlier point in time.
+
+For sufficiently large delays, the difference between
+
+$$
+\mathbf{x}_{k-d}
+$$
+
+and the actual state
+
+$$
+\mathbf{x}_{k}
+$$
+
+can become large enough to produce incorrect trajectory predictions and poor coordination decisions.
+
+---
+
+## Command-Replay Compensation
+
+The compensated controller begins with the same delayed state report but also uses the sequence of control commands issued after that report was generated.
+
+Conceptually,
+
+$$
+\mathbf{x}_{k-d}
+\overset{
+u_{k-d},\ldots,u_{k-1}
+}{\longrightarrow}
+\hat{\mathbf{x}}_{k}.
+$$
+
+The controller repeatedly applies its internal vehicle model using the stored command history:
+
+$$
+\hat{\mathbf{x}}_{t+1}
+=
+f(\hat{\mathbf{x}}_{t},\mathbf{u}_{t}).
+$$
+
+The resulting estimate is then passed to the MPC instead of the original stale measurement.
+
+This method is intentionally simple. It does not estimate unknown disturbances and does not use hidden simulator state.
+
+Its purpose is to isolate how much useful information can be recovered purely from **timestamped measurements, known dynamics, and previously issued commands**.
+
+---
+
+## Model Mismatch
+
+A perfect command replay would be uninteresting if the controller and plant were identical.
+
+To introduce model mismatch, the simulated plant experiences an additional acceleration disturbance:
+
+$$
+a_{\mathrm{actual}}
+=
+a_{\mathrm{command}}
++
+w,
+$$
+
+with
+
+$$
+w \sim \mathcal{N}(0,\sigma_a^2).
+$$
+
+The disturbance is applied only to the simulated plant.
+
+The controller does not observe \(w\), and the compensation model therefore cannot reproduce the true trajectory exactly.
+
+A separate seeded random stream is used for the disturbance so that controller configurations can be compared under consistent disturbance realizations.
+
+---
+
+## Safety Metric
+
+Pairwise separation is evaluated throughout each simulation transition rather than only at the discrete simulation states.
+
+For two vehicles moving linearly between consecutive simulation samples, the minimum distance along the two segments is computed.
+
+An episode is marked as containing a separation violation if
+
+$$
+d_{ij}<20\text{ m}
+$$
+
+for any active vehicle pair at any point during the episode.
+
+The MPC itself targets a slightly larger distance of
+
+$$
+d_{\mathrm{target}}=23\text{ m},
+$$
+
+providing a 3 m planning margin before constraint slack is introduced.
+
+---
+
+## Experiment Design
+
+The main experiment compares three state-information modes:
+
+* current
+* stale
+* compensated
+
+under three nominal report delays:
+
+* 0.5 s
+* 1.0 s
+* 2.0 s
+
+Each condition is evaluated using seeds **7–16**.
+
+This gives
+
+$$
+3 \times 3 \times 10 = 90
+$$
+
+simulation records.
+
+The same scenario seeds are reused across controller conditions to make the comparisons more meaningful.
+
+The current-state controller always receives zero-age state information. Its repeated rows across the three nominal delay settings therefore represent the same information condition and should not be interpreted as independent delay experiments.
+
+---
+
+## Experimental Results
+
+| Delay | State source | Violation episodes | Arrival rate | Worst separation | Failed solver calls |
+| ----: | ------------ | -----------------: | -----------: | ---------------: | ------------------: |
+| 0.5 s | Current      |               0/10 |       100.0% |         22.896 m |                   1 |
+| 0.5 s | Stale        |               0/10 |       100.0% |         21.399 m |                  10 |
+| 0.5 s | Compensated  |               0/10 |       100.0% |         22.938 m |                   1 |
+| 1.0 s | Current      |               0/10 |       100.0% |         22.896 m |                   1 |
+| 1.0 s | Stale        |               0/10 |        97.5% |         23.692 m |                  26 |
+| 1.0 s | Compensated  |               0/10 |       100.0% |         22.865 m |                   0 |
+| 2.0 s | Current      |               0/10 |       100.0% |         22.896 m |                   1 |
+| 2.0 s | Stale        |           **7/10** |    **60.0%** |      **3.980 m** |                  34 |
+| 2.0 s | Compensated  |           **0/10** |   **100.0%** |     **22.685 m** |                   1 |
+
+### Interpretation
+
+At **0.5 s**, all three approaches maintain separation in the tested episodes.
+
+At **1.0 s**, stale information begins to affect efficiency and solver behavior, although no separation violations are observed.
+
+At **2.0 s**, stale-state control deteriorates sharply. Seven of ten episodes contain a separation violation and the vehicle arrival rate falls to 60%.
+
+Command-replay compensation substantially reduces this degradation in the tested scenarios, producing behavior close to the current-state reference despite the controller not observing the plant acceleration disturbances.
+
+---
+
+## Solver Diagnostics
+
+In addition to trajectory-level metrics, AIRCOORD records optimization diagnostics at every control step, including:
+
+* number of solver calls,
+* rejected solver solutions,
+* number of MPC interventions,
+* maximum separation slack,
+* warm-start usage,
+* solver iterations,
+* objective evaluations,
+* decision time.
+
+A failed optimization call does **not** automatically imply a separation violation.
+
+If a candidate optimization result is rejected, the controller applies a braking fallback while retaining the nominal heading-rate command.
+
+This fallback is designed to keep the simulation well-defined but is not guaranteed to maintain separation.
+
+---
+
+## Quick Start
+
+Python 3.10 was used for the current implementation.
+
+Clone the repository and create an environment:
 
 ```bash
+git clone https://github.com/eminuluisik/aircoord.git
+cd aircoord
+
 python -m venv .venv
 ```
 
-Activate the environment using `.venv\Scripts\Activate.ps1` on Windows PowerShell or `source .venv/bin/activate` on macOS/Linux, then:
+Activate the environment.
+
+### Windows PowerShell
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+### Linux / macOS
+
+```bash
+source .venv/bin/activate
+```
+
+Install the dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
-python aircoord.py --controller baseline --seed 7 --out results/baseline --gif
-python aircoord.py --controller mpc --initialization warm --state-source compensated --delay 2 --accel-noise-std 0.3 --seed 7 --out results/compensated --gif
 ```
 
-MPC may run slower than simulated time. For a quick inspection of one optimization call:
+Run the tests:
 
 ```bash
-python aircoord.py --inspect-mpc --inspect-at 10 --initialization warm --state-source compensated --delay 2 --accel-noise-std 0.3 --out results/inspection
+python -m unittest discover -s tests -v
 ```
 
-## Reproduce the experiment grid
+---
+
+## Run a Single Simulation
+
+### Goal-tracking baseline
+
+```bash
+python aircoord.py \
+    --controller baseline \
+    --seed 7 \
+    --out results/baseline \
+    --gif
+```
+
+### MPC with current states
+
+```bash
+python aircoord.py \
+    --controller mpc \
+    --initialization warm \
+    --state-source current \
+    --delay 2 \
+    --accel-noise-std 0.3 \
+    --seed 7 \
+    --out results/current
+```
+
+### MPC with stale states
+
+```bash
+python aircoord.py \
+    --controller mpc \
+    --initialization warm \
+    --state-source stale \
+    --delay 2 \
+    --accel-noise-std 0.3 \
+    --seed 7 \
+    --out results/stale
+```
+
+### MPC with command-replay compensation
+
+```bash
+python aircoord.py \
+    --controller mpc \
+    --initialization warm \
+    --state-source compensated \
+    --delay 2 \
+    --accel-noise-std 0.3 \
+    --seed 7 \
+    --out results/compensated \
+    --gif
+```
+
+MPC simulations can run considerably slower than simulated time because a nonlinear optimization problem may be solved repeatedly during the episode.
+
+---
+
+## Inspect a Single MPC Optimization
+
+A single optimization call can be inspected without completing an entire MPC episode:
+
+```bash
+python aircoord.py \
+    --inspect-mpc \
+    --inspect-at 10 \
+    --initialization warm \
+    --state-source compensated \
+    --delay 2 \
+    --accel-noise-std 0.3 \
+    --out results/inspection
+```
+
+This is useful for examining the optimization objective, predicted minimum separation, slack, solver iterations, and returned control action.
+
+---
+
+## Reproduce the Experiment Grid
+
+Run all experiment conditions with:
 
 ```bash
 python scripts/run_experiments.py
 ```
 
-This launches nine conditions, each using seeds 7–16 (90 runs). It can take substantial time. Each condition has its own output directory; use a new output root to preserve earlier runs:
+To preserve existing results, specify another output directory:
 
 ```bash
 python scripts/run_experiments.py --out results/new_grid
 ```
 
-To inspect the nine commands without running simulations:
+To inspect the experiment commands without executing them:
 
 ```bash
 python scripts/run_experiments.py --dry-run
 ```
 
-Regenerate the evidence table, without running the controller:
+The full grid contains 90 simulation runs and may require substantial computation time.
+
+---
+
+## Regenerate the Summary
+
+The aggregate result table can be regenerated from the saved experiment records without rerunning the simulations:
 
 ```bash
 python scripts/summarize_evidence.py
 ```
 
-## Archived results
+This separates expensive simulation runs from lightweight analysis and makes the reported results easier to reproduce.
 
-| Delay setting (s) | State source | Episodes with violation | Arrival rate | Worst separation (m) | Failed solver calls |
-|---:|---|---:|---:|---:|---:|
-| 0.5 | current | 0/10 | 100.0% | 22.896 | 1 |
-| 0.5 | stale | 0/10 | 100.0% | 21.399 | 10 |
-| 0.5 | compensated | 0/10 | 100.0% | 22.938 | 1 |
-| 1.0 | current | 0/10 | 100.0% | 22.896 | 1 |
-| 1.0 | stale | 0/10 | 97.5% | 23.692 | 26 |
-| 1.0 | compensated | 0/10 | 100.0% | 22.865 | 0 |
-| 2.0 | current | 0/10 | 100.0% | 22.896 | 1 |
-| 2.0 | stale | 7/10 | 60.0% | 3.980 | 34 |
-| 2.0 | compensated | 0/10 | 100.0% | 22.685 | 1 |
+---
 
-Required separation is 20 m; the planner targets 23 m before slack. Each condition contains ten episodes with four vehicles. Arrival rate is the fraction of vehicles arriving within the 60 s simulation limit. A solver failure is a rejected optimization call, not necessarily an episode separation violation.
+## Output Files
 
-**The current-state reference ignores the delay setting and has zero report age.** Its repeated delay rows are the same information condition, not three independent safety evaluations. The nine evidence files contain 90 run records but only ten distinct scenario seeds.
+A normal run stores the simulation outputs in a dedicated result directory.
 
-## Repository guide
+Depending on the selected options, these include:
 
-- `aircoord.py`: supplied `ver6/aircoord.py` implementation, with no algorithm changes.
-- `requirements.txt`: dependency versions available in the local verification environment.
-- `tests/test_core.py`: geometry and report-compensation checks.
-- `scripts/run_experiments.py`: explicit experiment grid.
-- `scripts/summarize_evidence.py`: regenerates the results table from saved records.
-- `evidence/*.json`: supplied summary records, organized by experiment condition.
-- `docs/VALIDATION.md`: provenance and verification status.
+```text
+metrics.json
+diagnostics.csv
+trajectory.npz
+overview.png
+replay.gif
+```
 
-A normal run saves `metrics.json`, `diagnostics.csv`, `trajectory.npz`, `overview.png` and, with `--gif`, `replay.gif`. The output hierarchy includes controller, report mode, delay, initialization and seed.
+### `metrics.json`
 
-## Scope and limitations
+Episode-level performance metrics such as:
 
-Soft constraints and braking fallback do not guarantee separation. The simulator waits for optimization to finish; report delay does not model solver latency. Disturbance magnitude and four-way crossing geometry are limited. Current reports are an ideal reference, and compensation assumes known dynamics and reliable immediate execution of sent commands. See [validation and provenance](docs/VALIDATION.md) for the checks performed and their scope.
+* arrival rate,
+* minimum separation,
+* violating pairs,
+* mean arrival time,
+* path length,
+* solver statistics.
 
-## Research context
+### `diagnostics.csv`
 
-This independent demo relates to uncertainty-aware aircraft coordination and trustworthy decision support. These themes overlap with the [Human–AI Collaborative Intelligence for Aviation Systems group](https://bizhao001.github.io/). This project is not affiliated with or endorsed by the group and does not reproduce a specific published method.
+Step-by-step controller and optimization diagnostics.
 
-## License
+### `trajectory.npz`
 
-A license has not yet been selected for this repository.
+Numerical trajectory data for further analysis.
+
+### `overview.png`
+
+Static trajectory and separation visualization.
+
+### `replay.gif`
+
+Optional animation of the simulated episode.
+
+---
+
+## Repository Structure
+
+```text
+aircoord/
+│
+├── aircoord.py
+│   Main simulator, controllers, MPC, compensation logic and visualization
+│
+├── scripts/
+│   ├── run_experiments.py
+│   └── summarize_evidence.py
+│
+├── tests/
+│   └── test_core.py
+│
+├── evidence/
+│   Saved experiment summaries
+│
+├── assets/
+│   Figures used in this README
+│
+├── docs/
+│   Additional technical and reproducibility notes
+│
+├── AIRCOORD_Report.pdf
+│   Technical report
+│
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Design Choices
+
+Several choices were made deliberately to keep the project small enough to inspect while still exposing meaningful coordination failures.
+
+### Centralized coordination
+
+The controller optimizes all active vehicles jointly.
+
+This avoids introducing communication topology or distributed-consensus effects into the initial study and allows the experiment to focus specifically on delayed state information.
+
+### Shared scenario seeds
+
+Initial conditions and plant disturbances are generated reproducibly.
+
+Using the same seeds across control configurations reduces variation caused by different scenarios and makes paired comparisons possible.
+
+### Plant-only disturbances
+
+The acceleration disturbance is applied after the commanded acceleration is generated and is unknown to the controller.
+
+The compensated controller therefore receives no privileged access to the simulated plant state.
+
+### Soft separation constraint
+
+Separation slack prevents the nonlinear optimization problem from becoming immediately infeasible.
+
+The magnitude and frequency of slack usage are recorded so that numerical feasibility is not confused with guaranteed safety.
+
+---
+
+## Limitations
+
+AIRCOORD is a research prototype and several simplifications remain.
+
+### No formal safety guarantee
+
+The separation condition inside the MPC is soft. Neither the MPC nor the fallback controller provides a formal collision-avoidance guarantee.
+
+### Simplified dynamics
+
+The vehicles use a planar kinematic model. Full aircraft translational and rotational dynamics, aerodynamic effects, wind fields, and actuator dynamics are not modeled.
+
+### Limited scenario geometry
+
+The main experiment considers a four-way crossing scenario. Performance in denser, asymmetric, or structured traffic environments has not yet been established.
+
+### Simplified communication model
+
+Communication degradation is represented primarily through fixed state-report delay.
+
+Packet loss, asynchronous reports, variable latency, communication topology, and bandwidth constraints are outside the current scope.
+
+### Model-based compensation
+
+Command replay assumes known nominal vehicle dynamics and reliable execution of previous control commands.
+
+Unobserved disturbances cause the propagated estimate to diverge from the true state as the delay increases.
+
+### Computational cost
+
+The controller uses centralized nonlinear optimization. Its computational cost can grow rapidly with the number of vehicles and therefore limits scalability.
+
+### Solver latency
+
+The simulator waits for each optimization to finish before advancing simulated time. Optimization wall-clock latency is recorded but is not currently inserted back into the communication or control loop.
+
+---
+
+## Future Work
+
+AIRCOORD provides a baseline for several extensions.
+
+Possible next steps include:
+
+* decentralized or distributed coordination,
+* time-varying and stochastic communication delays,
+* packet loss and asynchronous state updates,
+* probabilistic state estimation,
+* uncertainty-aware MPC,
+* explicit robust or chance-constrained safety formulations,
+* larger and more heterogeneous traffic scenarios,
+* learning-based multi-agent coordination,
+* comparison between model-based prediction and learned state prediction,
+* real-time optimization and hardware-in-the-loop evaluation.
+
+A particularly interesting direction is to study how **model-based prediction and learning-based decision making can be combined when agents operate with incomplete, delayed, or uncertain information**.
+
+---
+
+## Technical Report
+
+A more detailed discussion of the model, controller design, experiment setup, and results is available in:
+
+[`AIRCOORD_Report.pdf`](AIRCOORD_Report.pdf)
+
+---
+
+## Author
+
+**Fatih Emin Uluışık**
+
+B.Sc. Mechanical Engineering
+Bilkent University
+
+Research interests: dynamic systems, control, optimization, autonomous systems, and multi-agent decision making.
