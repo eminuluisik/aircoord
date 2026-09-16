@@ -71,16 +71,9 @@ No separation violation is observed in this episode and all four vehicles reach 
 
 Each vehicle is represented by the planar state
 
-$$
-\mathbf{x}
-=
-\begin{bmatrix}
-x \\
-y \\
-v \\
-\psi
-\end{bmatrix}
-$$
+```math
+\mathbf{x} = \begin{bmatrix} x \\ y \\ v \\ \psi \end{bmatrix}
+```
 
 where:
 
@@ -90,14 +83,9 @@ where:
 
 The control input is
 
-$$
-\mathbf{u}
-=
-\begin{bmatrix}
-a \\
-\omega
-\end{bmatrix}
-$$
+```math
+\mathbf{u} = \begin{bmatrix} a \\ \omega \end{bmatrix}
+```
 
 where:
 
@@ -210,16 +198,10 @@ $$
 
 the stored commands are replayed through the controller's internal vehicle model:
 
-$$
-\hat{\mathbf{x}}_{t+1}
-=
-f\left(
-\hat{\mathbf{x}}_t,
-\mathbf{u}_t
-\right),
-\qquad
-t = k-d,\ldots,k-1.
-$$
+```math
+\hat{\mathbf{x}}_{t+1} = f\left(\hat{\mathbf{x}}_t,\mathbf{u}_t\right),
+\qquad t = k-d,\ldots,k-1.
+```
 
 This produces an estimate of the current state,
 
@@ -251,13 +233,9 @@ A perfect command replay would be uninteresting if the controller and plant were
 
 To introduce model mismatch, the simulated plant experiences an additional acceleration disturbance:
 
-$$
-a_{\mathrm{actual}}
-=
-a_{\mathrm{command}}
-+
-w,
-$$
+```math
+a_{\mathrm{actual}} = a_{\mathrm{command}} + w,
+```
 
 where
 
